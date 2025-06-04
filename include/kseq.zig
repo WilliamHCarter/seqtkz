@@ -24,3 +24,17 @@ pub const Sequence = struct {
         self.quality.deinit();
     }
 };
+
+
+pub const FastaReader = struct {
+    buffered_reader: std.io.BufferedReader(4096, anytype),
+    allocator: std.mem.Allocator,
+    last_char: ?u8 = null,
+
+    pub fn init(reader: anytype, allocator: std.mem.Allocator) FastaReader {
+        return .{
+            .buffered_reader = std.io.bufferedReader(reader),
+            .allocator = allocator,
+        };
+    }
+};
