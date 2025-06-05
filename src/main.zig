@@ -1,36 +1,36 @@
 const std = @import("std");
-
+const kseq = @import("../include/kseq.zig");
 // Error types
 const UsageError = error{NoCommandProvided};
 const CommandError = error{ InvalidCommand, CommandFailed };
 
-const CommandFn = fn ([][]const u8) CommandError!void;
+const CommandFn = *const fn ([][]const u8) CommandError!void;
 
 const commands = std.StaticStringMap(CommandFn).initComptime(.{
-    .{ "comp", stk_comp },
-    .{ "fqchk", stk_fqchk },
-    .{ "hety", stk_hety },
-    .{ "gc", stk_gc },
-    .{ "subseq", stk_subseq },
-    .{ "mutfa", stk_mutfa },
-    .{ "mergefa", stk_mergefa },
-    .{ "mergepe", stk_mergepe },
-    .{ "dropse", stk_dropse },
-    .{ "randbase", stk_randbase },
-    .{ "cutN", stk_cutN },
-    .{ "gap", stk_gap },
-    .{ "listhet", stk_listhet },
-    .{ "famask", stk_famask },
-    .{ "trimfq", stk_trimfq },
-    .{ "hrun", stk_hrun },
-    .{ "sample", stk_sample },
-    .{ "seq", stk_seq },
-    .{ "kfreq", stk_kfreq },
-    .{ "rename", stk_rename },
-    .{ "split", stk_split },
-    .{ "hpc", stk_hpc },
-    .{ "size", stk_size },
-    .{ "telo", stk_telo },
+    .{ "comp", &stk_comp },
+    .{ "fqchk", &stk_fqchk },
+    .{ "hety", &stk_hety },
+    .{ "gc", &stk_gc },
+    .{ "subseq", &stk_subseq },
+    .{ "mutfa", &stk_mutfa },
+    .{ "mergefa", &stk_mergefa },
+    .{ "mergepe", &stk_mergepe },
+    .{ "dropse", &stk_dropse },
+    .{ "randbase", &stk_randbase },
+    .{ "cutN", &stk_cutN },
+    .{ "gap", &stk_gap },
+    .{ "listhet", &stk_listhet },
+    .{ "famask", &stk_famask },
+    .{ "trimfq", &stk_trimfq },
+    .{ "hrun", &stk_hrun },
+    .{ "sample", &stk_sample },
+    .{ "seq", &stk_seq },
+    .{ "kfreq", &stk_kfreq },
+    .{ "rename", &stk_rename },
+    .{ "split", &stk_split },
+    .{ "hpc", &stk_hpc },
+    .{ "size", &stk_size },
+    .{ "telo", &stk_telo },
 });
 
 pub fn main() !void {
@@ -49,7 +49,10 @@ pub fn main() !void {
     }
 
     const command = args[1];
-    const remaining_args = args[1..];
+    const remaining_args = try allocator.alloc([]const u8, args.len - 1);
+    for (args[1..], 0..) |arg, i| {
+        remaining_args[i] = arg;
+    }
 
     if (commands.get(command)) |command_fn| {
         command_fn(remaining_args) catch |err| switch (err) {
@@ -165,9 +168,28 @@ fn stk_rename(args: [][]const u8) CommandError!void {
 fn stk_split(args: [][]const u8) CommandError!void {
     _ = args;
 }
-fn stk_hpc(args: [][]const u8) CommandError!void {
-    _ = args;
+pub fn stk_hpc(allocator: std.mem.Allocator, reader: anytype, writer: anytype) !void {
+    var seq_reader = kseq.FastaReader.init(reader, allocator);
+
+    var sequence = kseq.Sequence.init(allocator);
+    defer sequence.deinit();
+
+    while (try seq_reader.readSequence(&sequence)) {
+        if (sequence.sequence.items.len == 0) continue;
+
+        try writer.print(">{s}\n", .{sequence.name.items});
+
+        var last_char: ?u8 = null;
+        for (sequence.sequence.items) |char| {
+            if (last_char == null or char != last_char.?) {
+                try writer.writeByte(char);
+                last_char = char;
+            }
+        }
+        try writer.writeByte('\n');
+    }
 }
+
 fn stk_size(args: [][]const u8) CommandError!void {
     _ = args;
 }
