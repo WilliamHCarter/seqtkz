@@ -1,5 +1,12 @@
 const std = @import("std");
 
+pub const ReadError = error{
+    TruncatedQuality,
+    QualityLengthMismatch,
+    OutOfMemory,
+    EndOfStream,
+};
+
 pub const Sequence = struct {
     name: std.ArrayList(u8),
     comment: std.ArrayList(u8),

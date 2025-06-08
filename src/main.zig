@@ -190,9 +190,21 @@ pub fn stk_hpc(allocator: std.mem.Allocator, reader: anytype, writer: anytype) !
     }
 }
 
-fn stk_size(args: [][]const u8) CommandError!void {
-    _ = args;
+fn stk_size(allocator: std.mem.Allocator, reader: anytype, writer: anytype) !void {
+    var seq_reader = kseq.FastaReader.init(reader, allocator);
+    var sequence = kseq.Sequence.init(allocator);
+    defer sequence.deinit();
+
+    var seq_count: u64, var length: u64 = .{ 0, 0 };
+
+    while (try seq_reader.readSequence(&sequence)) {
+        seq_count += 1;
+        length += sequence.sequence.items.len;
+    }
+
+    try writer.print("{}\t{}\n", .{ seq_count, length });
 }
+
 fn stk_telo(args: [][]const u8) CommandError!void {
     _ = args;
 }
