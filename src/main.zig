@@ -1,215 +1,77 @@
 const std = @import("std");
-const kseq = @import("../include/kseq.zig");
-// Error types
-const UsageError = error{NoCommandProvided};
-const CommandError = error{ InvalidCommand, CommandFailed };
+const kseq = @import("./kseq.zig");
+const commands = @import("commands.zig");
 
-const CommandFn = *const fn ([][]const u8) CommandError!void;
-
-const commands = std.StaticStringMap(CommandFn).initComptime(.{
-    .{ "comp", &stk_comp },
-    .{ "fqchk", &stk_fqchk },
-    .{ "hety", &stk_hety },
-    .{ "gc", &stk_gc },
-    .{ "subseq", &stk_subseq },
-    .{ "mutfa", &stk_mutfa },
-    .{ "mergefa", &stk_mergefa },
-    .{ "mergepe", &stk_mergepe },
-    .{ "dropse", &stk_dropse },
-    .{ "randbase", &stk_randbase },
-    .{ "cutN", &stk_cutN },
-    .{ "gap", &stk_gap },
-    .{ "listhet", &stk_listhet },
-    .{ "famask", &stk_famask },
-    .{ "trimfq", &stk_trimfq },
-    .{ "hrun", &stk_hrun },
-    .{ "sample", &stk_sample },
-    .{ "seq", &stk_seq },
-    .{ "kfreq", &stk_kfreq },
-    .{ "rename", &stk_rename },
-    .{ "split", &stk_split },
-    .{ "hpc", &stk_hpc },
-    .{ "size", &stk_size },
-    .{ "telo", &stk_telo },
-});
-
-pub fn main() !void {
+pub fn main() void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
     const allocator = gpa.allocator();
+    defer {
+        const err = gpa.deinit();
+        if (err == .leak) std.debug.print("Memory leaks detected: {}\n", .{err});
+    }
 
+    seqtk(allocator) catch |err| {
+        const stderr = std.io.getStdErr().writer();
+        switch (err) {
+            error.InvalidCommand => stderr.print("Invalid command. Use 'seqtk help' to see available commands.\n", .{}) catch {},
+            error.MissingArgument => stderr.print("Missing argument for the command. Use 'seqtk help' for usage information.\n", .{}) catch {},
+            error.CommandFailed => stderr.print("Command execution failed. Please check your input and try again.\n", .{}) catch {},
+            error.OutOfMemory => stderr.print("Out of memory. Try closing other applications or increasing available memory.\n", .{}) catch {},
+            error.AccessDenied => stderr.print("Access denied. Try running the program with higher privileges.\n", .{}) catch {},
+            error.InvalidArgument => stderr.print("Invalid argument provided. Use 'seqtk help' for usage information.\n", .{}) catch {},
+            error.FileNotFound => stderr.print("Input file not found. Please check the file path.\n", .{}) catch {},
+            else => stderr.print("An unexpected error occurred. Please report this issue.\n", .{}) catch {},
+        }
+        stderr.print("Error: {s}\n", .{@errorName(err)}) catch {};
+        std.process.exit(1);
+    };
+}
+
+fn seqtk(allocator: std.mem.Allocator) !void {
     const args = try std.process.argsAlloc(allocator);
     defer std.process.argsFree(allocator, args);
 
-    if (args.len < 2) {
-        usage() catch |err| switch (err) {
-            UsageError.NoCommandProvided => std.process.exit(1),
-        };
-        return;
-    }
+    if (args.len < 2) return try commands.help();
 
-    const command = args[1];
-    const remaining_args = try allocator.alloc([]const u8, args.len - 1);
-    for (args[1..], 0..) |arg, i| {
-        remaining_args[i] = arg;
-    }
+    const cmd = commands.parseCommand(args[1]) catch |err| switch (err) {
+        else => {
+            std.debug.print("[main] unrecognized command '{s}'. Abort!\n", .{args[1]});
+            return error.InvalidCommand;
+        },
+    };
 
-    if (commands.get(command)) |command_fn| {
-        command_fn(remaining_args) catch |err| switch (err) {
-            CommandError.InvalidCommand, CommandError.CommandFailed => {
-                std.debug.print("Command '{s}' failed\n", .{command});
-                std.process.exit(1);
-            },
-        };
-    } else {
-        std.debug.print("[main] unrecognized command '{s}'. Abort!\n", .{command});
-        std.process.exit(1);
-    }
-}
+    const remaining_args = if (args.len > 2) args[2..] else &[_][]const u8{};
 
-fn usage() UsageError!void {
-    const usage_text =
-        \\
-        \\Usage:   seqtk <command> <arguments>
-        \\Version: 1.4-r132-dirty
-        \\
-        \\Command: seq       common transformation of FASTA/Q
-        \\         size      report the number sequences and bases
-        \\         comp      get the nucleotide composition of FASTA/Q
-        \\         sample    subsample sequences
-        \\         subseq    extract subsequences from FASTA/Q
-        \\         fqchk     fastq QC (base/quality summary)
-        \\         mergepe   interleave two PE FASTA/Q files
-        \\         split     split one file into multiple smaller files
-        \\         trimfq    trim FASTQ using the Phred algorithm
-        \\
-        \\         hety      regional heterozygosity
-        \\         gc        identify high- or low-GC regions
-        \\         mutfa     point mutate FASTA at specified positions
-        \\         mergefa   merge two FASTA/Q files
-        \\         famask    apply a X-coded FASTA to a source FASTA
-        \\         dropse    drop unpaired from interleaved PE FASTA/Q
-        \\         rename    rename sequence names
-        \\         randbase  choose a random base from hets
-        \\         cutN      cut sequence at long N
-        \\         gap       get the gap locations
-        \\         listhet   extract the position of each het
-        \\         hpc       homopolyer-compressed sequence
-        \\         telo      identify telomere repeats in asm or long reads
-        \\
-        \\
-    ;
-
-    std.debug.print("{s}", .{usage_text});
-    return UsageError.NoCommandProvided;
-}
-
-// Command implementations
-fn stk_comp(args: [][]const u8) CommandError!void {
-    _ = args;
-}
-fn stk_fqchk(args: [][]const u8) CommandError!void {
-    _ = args;
-}
-fn stk_hety(args: [][]const u8) CommandError!void {
-    _ = args;
-}
-fn stk_gc(args: [][]const u8) CommandError!void {
-    _ = args;
-}
-fn stk_subseq(args: [][]const u8) CommandError!void {
-    _ = args;
-}
-fn stk_mutfa(args: [][]const u8) CommandError!void {
-    _ = args;
-}
-fn stk_mergefa(args: [][]const u8) CommandError!void {
-    _ = args;
-}
-fn stk_mergepe(args: [][]const u8) CommandError!void {
-    _ = args;
-}
-fn stk_dropse(args: [][]const u8) CommandError!void {
-    _ = args;
-}
-fn stk_randbase(args: [][]const u8) CommandError!void {
-    _ = args;
-}
-fn stk_cutN(args: [][]const u8) CommandError!void {
-    _ = args;
-}
-fn stk_gap(args: [][]const u8) CommandError!void {
-    _ = args;
-}
-fn stk_listhet(args: [][]const u8) CommandError!void {
-    _ = args;
-}
-fn stk_famask(args: [][]const u8) CommandError!void {
-    _ = args;
-}
-fn stk_trimfq(args: [][]const u8) CommandError!void {
-    _ = args;
-}
-fn stk_hrun(args: [][]const u8) CommandError!void {
-    _ = args;
-}
-fn stk_sample(args: [][]const u8) CommandError!void {
-    _ = args;
-}
-fn stk_seq(args: [][]const u8) CommandError!void {
-    _ = args;
-}
-fn stk_kfreq(args: [][]const u8) CommandError!void {
-    _ = args;
-}
-fn stk_rename(args: [][]const u8) CommandError!void {
-    _ = args;
-}
-fn stk_split(args: [][]const u8) CommandError!void {
-    _ = args;
-}
-pub fn stk_hpc(allocator: std.mem.Allocator, reader: anytype, writer: anytype) !void {
-    var seq_reader = kseq.FastaReader.init(reader, allocator);
-
-    var sequence = kseq.Sequence.init(allocator);
-    defer sequence.deinit();
-
-    while (try seq_reader.readSequence(&sequence)) {
-        if (sequence.sequence.items.len == 0) continue;
-
-        try writer.print(">{s}\n", .{sequence.name.items});
-
-        var last_char: ?u8 = null;
-        for (sequence.sequence.items) |char| {
-            if (last_char == null or char != last_char.?) {
-                try writer.writeByte(char);
-                last_char = char;
-            }
-        }
-        try writer.writeByte('\n');
+    switch (cmd) {
+        .Comp => try commands.comp(remaining_args, allocator),
+        .Fqchk => try commands.fqchk(remaining_args, allocator),
+        .Hety => try commands.hety(remaining_args, allocator),
+        .Gc => try commands.gc(remaining_args, allocator),
+        .Subseq => try commands.subseq(remaining_args, allocator),
+        .Mutfa => try commands.mutfa(remaining_args, allocator),
+        .Mergefa => try commands.mergefa(remaining_args, allocator),
+        .Mergepe => try commands.mergepe(remaining_args, allocator),
+        .Dropse => try commands.dropse(remaining_args, allocator),
+        .Randbase => try commands.randbase(remaining_args, allocator),
+        .CutN => try commands.cutN(remaining_args, allocator),
+        .Gap => try commands.gap(remaining_args, allocator),
+        .Listhet => try commands.listhet(remaining_args, allocator),
+        .Famask => try commands.famask(remaining_args, allocator),
+        .Trimfq => try commands.trimfq(remaining_args, allocator),
+        .Hrun => try commands.hrun(remaining_args, allocator),
+        .Sample => try commands.sample(remaining_args, allocator),
+        .Seq => try commands.seq(remaining_args, allocator),
+        .Kfreq => try commands.kfreq(remaining_args, allocator),
+        .Rename => try commands.rename(remaining_args, allocator),
+        .Split => try commands.split(remaining_args, allocator),
+        .Hpc => try commands.hpc(remaining_args, allocator),
+        .Size => try commands.size(remaining_args, allocator),
+        .Telo => try commands.telo(remaining_args, allocator),
+        .Help => try commands.help(),
     }
 }
 
-fn stk_size(allocator: std.mem.Allocator, reader: anytype, writer: anytype) !void {
-    var seq_reader = kseq.FastaReader.init(reader, allocator);
-    var sequence = kseq.Sequence.init(allocator);
-    defer sequence.deinit();
-
-    var seq_count: u64, var length: u64 = .{ 0, 0 };
-
-    while (try seq_reader.readSequence(&sequence)) {
-        seq_count += 1;
-        length += sequence.sequence.items.len;
-    }
-
-    try writer.print("{}\t{}\n", .{ seq_count, length });
-}
-
-fn stk_telo(args: [][]const u8) CommandError!void {
-    _ = args;
-}
-
-//============================================================++=====================
+//============================================================
 test "simple test" {
     var list = std.ArrayList(i32).init(std.testing.allocator);
     defer list.deinit(); // Try commenting this out and see if zig detects the memory leak!
