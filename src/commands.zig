@@ -1,5 +1,5 @@
 const std = @import("std");
-const kseq = @import("../include/kseq.zig");
+const kseq = @import("./kseq.zig");
 
 const Command = enum {
     Comp,
@@ -240,7 +240,7 @@ pub fn hpc(args: []const []const u8, allocator: std.mem.Allocator) CommandError!
         // Read from stdin, write to stdout
         const stdin = std.io.getStdIn().reader();
         const stdout = std.io.getStdOut().writer();
-        return hpcImpl(allocator, stdin, stdout);
+        return hpcImpl(allocator, stdin, stdout) catch error.CommandFailed;
     } else {
         // TODO: Handle file input/output
         return CommandError.InvalidArgument;
@@ -248,8 +248,7 @@ pub fn hpc(args: []const []const u8, allocator: std.mem.Allocator) CommandError!
 }
 
 fn hpcImpl(allocator: std.mem.Allocator, reader: anytype, writer: anytype) !void {
-    var seq_reader = kseq.FastaReader.init(reader, allocator);
-
+    var seq_reader = kseq.FastaReader(@TypeOf(reader)).init(reader, allocator);
     var sequence = kseq.Sequence.init(allocator);
     defer sequence.deinit();
 
@@ -274,7 +273,7 @@ pub fn size(args: []const []const u8, allocator: std.mem.Allocator) CommandError
         // Read from stdin, write to stdout
         const stdin = std.io.getStdIn().reader();
         const stdout = std.io.getStdOut().writer();
-        return sizeImpl(allocator, stdin, stdout);
+        return sizeImpl(allocator, stdin, stdout) catch error.CommandFailed;
     } else {
         // TODO: Handle file input/output
         return CommandError.InvalidArgument;
@@ -282,7 +281,7 @@ pub fn size(args: []const []const u8, allocator: std.mem.Allocator) CommandError
 }
 
 fn sizeImpl(allocator: std.mem.Allocator, reader: anytype, writer: anytype) !void {
-    var seq_reader = kseq.FastaReader.init(reader, allocator);
+    var seq_reader = kseq.FastaReader(@TypeOf(reader)).init(reader, allocator);
     var sequence = kseq.Sequence.init(allocator);
     defer sequence.deinit();
 

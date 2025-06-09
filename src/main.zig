@@ -17,12 +17,10 @@ pub fn main() void {
             error.MissingArgument => stderr.print("Missing argument for the command. Use 'seqtk help' for usage information.\n", .{}) catch {},
             error.CommandFailed => stderr.print("Command execution failed. Please check your input and try again.\n", .{}) catch {},
             error.OutOfMemory => stderr.print("Out of memory. Try closing other applications or increasing available memory.\n", .{}) catch {},
-            error.AccessDenied => stderr.print("Access denied. Try running the program with higher privileges.\n", .{}) catch {},
             error.InvalidArgument => stderr.print("Invalid argument provided. Use 'seqtk help' for usage information.\n", .{}) catch {},
             error.FileNotFound => stderr.print("Input file not found. Please check the file path.\n", .{}) catch {},
-            else => stderr.print("An unexpected error occurred. Please report this issue.\n", .{}) catch {},
+            else => stderr.print("An unexpected error occurred: {s}\n", .{@errorName(err)}) catch {},
         }
-        stderr.print("Error: {s}\n", .{@errorName(err)}) catch {};
         std.process.exit(1);
     };
 }

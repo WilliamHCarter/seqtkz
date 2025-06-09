@@ -32,117 +32,120 @@ pub const Sequence = struct {
     }
 };
 
+pub fn FastaReader(comptime ReaderType: type) type {
+    return struct {
+        buffered_reader: std.io.BufferedReader(4096, ReaderType),
+        allocator: std.mem.Allocator,
+        last_char: ?u8 = null,
 
-pub const FastaReader = struct {
-    buffered_reader: std.io.BufferedReader(4096, anytype),
-    allocator: std.mem.Allocator,
-    last_char: ?u8 = null,
+        const Self = @This();
 
-    pub fn init(reader: anytype, allocator: std.mem.Allocator) FastaReader {
-        return .{
-            .buffered_reader = std.io.bufferedReader(reader),
-            .allocator = allocator,
-        };
-    }
+        pub fn init(reader: ReaderType, allocator: std.mem.Allocator) Self {
+            return .{
+                .buffered_reader = std.io.bufferedReader(reader),
+                .allocator = allocator,
+            };
+        }
 
-    pub fn readSequence(self: *FastaReader, seq: *Sequence) !bool {
-        // Clear previous sequence data
-        seq.name.clearRetainingCapacity();
-        seq.comment.clearRetainingCapacity();
-        seq.sequence.clearRetainingCapacity();
-        seq.quality.clearRetainingCapacity();
-        seq.is_fastq = false;
+        pub fn readSequence(self: *Self, seq: *Sequence) !bool {
+            // Clear previous sequence data
+            seq.name.clearRetainingCapacity();
+            seq.comment.clearRetainingCapacity();
+            seq.sequence.clearRetainingCapacity();
+            seq.quality.clearRetainingCapacity();
+            seq.is_fastq = false;
 
-        var reader = self.buffered_reader.reader();
+            var reader = self.buffered_reader.reader();
 
-        // If we don't have a stored character, read until we find a header
-        if (self.last_char == null) {
+            // If we don't have a stored character, read until we find a header
+            if (self.last_char == null) {
+                while (true) {
+                    const byte = reader.readByte() catch |err| {
+                        if (err == error.EndOfStream) return false;
+                        return err;
+                    };
+                    if (byte == '>' or byte == '@') {
+                        self.last_char = byte;
+                        break;
+                    }
+                }
+            }
+
+            // Determine format from header character
+            const header_char = self.last_char.?;
+            seq.is_fastq = (header_char == '@');
+
+            // Read name (until space) and comment (rest of line)
+            var found_space = false;
             while (true) {
                 const byte = reader.readByte() catch |err| {
-                    if (err == error.EndOfStream) return false;
+                    if (err == error.EndOfStream) break;
                     return err;
                 };
-                if (byte == '>' or byte == '@') {
+
+                if (byte == '\n') break;
+
+                if (!found_space and byte == ' ') {
+                    found_space = true;
+                    continue;
+                }
+
+                if (!found_space) {
+                    try seq.name.append(byte);
+                } else {
+                    try seq.comment.append(byte);
+                }
+            }
+
+            // Read sequence lines until we hit a header or quality marker
+            self.last_char = null;
+            while (true) {
+                const byte = reader.readByte() catch |err| {
+                    if (err == error.EndOfStream) break;
+                    return err;
+                };
+
+                if (byte == '>' or byte == '@' or byte == '+') {
                     self.last_char = byte;
                     break;
                 }
-            }
-        }
-
-        // Determine format from header character
-        const header_char = self.last_char.?;
-        seq.is_fastq = (header_char == '@');
-
-        // Read name (until space) and comment (rest of line)
-        var found_space = false;
-        while (true) {
-            const byte = reader.readByte() catch |err| {
-                if (err == error.EndOfStream) break;
-                return err;
-            };
-
-            if (byte == '\n') break;
-
-            if (!found_space and byte == ' ') {
-                found_space = true;
-                continue;
-            }
-
-            if (!found_space) {
-                try seq.name.append(byte);
-            } else {
-                try seq.comment.append(byte);
-            }
-        }
-
-        // Read sequence lines until we hit a header or quality marker
-        self.last_char = null;
-        while (true) {
-            const byte = reader.readByte() catch |err| {
-                if (err == error.EndOfStream) break;
-                return err;
-            };
-
-            if (byte == '>' or byte == '@' or byte == '+') {
-                self.last_char = byte;
-                break;
-            }
-
-            if (byte != '\n' and byte != '\r') {
-                try seq.sequence.append(byte);
-            }
-        }
-
-        // If FASTQ and we hit '+', read quality scores
-        if (seq.is_fastq and self.last_char == '+') {
-            // Skip rest of '+' line
-            while (true) {
-                const byte = reader.readByte() catch |err| {
-                    if (err == error.EndOfStream) return error.TruncatedQuality;
-                    return err;
-                };
-                if (byte == '\n') break;
-            }
-
-            // Read quality scores (must be same length as sequence)
-            while (seq.quality.items.len < seq.sequence.items.len) {
-                const byte = reader.readByte() catch |err| {
-                    if (err == error.EndOfStream) return error.TruncatedQuality;
-                    return err;
-                };
 
                 if (byte != '\n' and byte != '\r') {
-                    try seq.quality.append(byte);
+                    try seq.sequence.append(byte);
                 }
             }
 
-            if (seq.quality.items.len != seq.sequence.items.len) {
-                return error.QualityLengthMismatch;
+            // If FASTQ and we hit '+', read quality scores
+            if (seq.is_fastq and self.last_char == '+') {
+                // Skip rest of '+' line
+                while (true) {
+                    const byte = reader.readByte() catch |err| {
+                        if (err == error.EndOfStream) return error.TruncatedQuality;
+                        return err;
+                    };
+                    if (byte == '\n') break;
+                }
+
+                // Read quality scores (must be same length as sequence)
+                while (seq.quality.items.len < seq.sequence.items.len) {
+                    const byte = reader.readByte() catch |err| {
+                        if (err == error.EndOfStream) return error.TruncatedQuality;
+                        return err;
+                    };
+
+                    if (byte != '\n' and byte != '\r') {
+                        try seq.quality.append(byte);
+                    }
+                }
+
+                if (seq.quality.items.len != seq.sequence.items.len) {
+                    return error.QualityLengthMismatch;
+                }
+
+                self.last_char = null;
             }
 
-            self.last_char = null;
+            return true;
         }
-
-        return true;
-    }
-};
+    };
+}
