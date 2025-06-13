@@ -158,9 +158,72 @@ pub fn mergepe(args: []const []const u8, allocator: std.mem.Allocator) CommandEr
 }
 
 pub fn dropse(args: []const []const u8, allocator: std.mem.Allocator) CommandError!void {
-    _ = args;
-    _ = allocator;
-    // TODO: Implement unpaired sequence dropping
+    if (args.len == 0) {
+        // Check if stdin is a terminal
+        if (std.io.getStdIn().isTty()) {
+            std.debug.print("Usage: seqtk dropse <in.fq>\n", .{});
+            return CommandError.InvalidArgument;
+        }
+        // Read from stdin, write to stdout
+        const stdin = std.io.getStdIn().reader();
+        const stdout = std.io.getStdOut().writer();
+        return dropseImpl(allocator, stdin, stdout) catch error.CommandFailed;
+    } else {
+        // TODO: Handle file input
+        const file = std.fs.cwd().openFile(args[0], .{}) catch return error.FileNotFound;
+        defer file.close();
+        const stdout = std.io.getStdOut().writer();
+        return dropseImpl(allocator, file.reader(), stdout) catch error.CommandFailed;
+    }
+}
+
+fn dropseImpl(allocator: std.mem.Allocator, reader: anytype, writer: anytype) !void {
+    var seq_reader = kseq.FastaReader(@TypeOf(reader)).init(reader, allocator);
+    var last = kseq.Sequence.init(allocator);
+    defer last.deinit();
+    var current = kseq.Sequence.init(allocator);
+    defer current.deinit();
+    var has_last = false;
+
+    while (try seq_reader.readSequence(&current)) {
+        if (!has_last) {
+            try copySequence(&last, &current);
+            has_last = true;
+            continue;
+        }
+
+        const is_pair = isPairedSequence(&last, &current);
+        if (!is_pair) {
+            try copySequence(&last, &current);
+            continue;
+        }
+
+        // Output both sequences
+        try writeSequence(writer, &last);
+        try writeSequence(writer, &current);
+        has_last = false;
+    }
+}
+
+//dropse helper
+fn isPairedSequence(seq1: *const kseq.Sequence, seq2: *const kseq.Sequence) bool {
+    const name1 = seq1.name.items;
+    const name2 = seq2.name.items;
+
+    if (name1.len != name2.len) return false;
+
+    // Check if names end with /1 and /2 (or similar pattern)
+    var compare_len = name1.len;
+    if (name1.len > 2 and
+        name1[name1.len - 2] == '/' and
+        name2[name2.len - 2] == '/' and
+        std.ascii.isDigit(name1[name1.len - 1]) and
+        std.ascii.isDigit(name2[name2.len - 1]))
+    {
+        compare_len = name1.len - 2;
+    }
+
+    return std.mem.eql(u8, name1[0..compare_len], name2[0..compare_len]);
 }
 
 pub fn randbase(args: []const []const u8, allocator: std.mem.Allocator) CommandError!void {
@@ -300,4 +363,46 @@ pub fn telo(args: []const []const u8, allocator: std.mem.Allocator) CommandError
     _ = args;
     _ = allocator;
     // TODO: Implement telomere repeat identification
+}
+
+//============================== Helper Function ==============================
+fn copySequence(dest: *kseq.Sequence, src: *const kseq.Sequence) !void {
+    dest.name.clearRetainingCapacity();
+    dest.comment.clearRetainingCapacity();
+    dest.sequence.clearRetainingCapacity();
+    dest.quality.clearRetainingCapacity();
+
+    try dest.name.appendSlice(src.name.items);
+    try dest.comment.appendSlice(src.comment.items);
+    try dest.sequence.appendSlice(src.sequence.items);
+    try dest.quality.appendSlice(src.quality.items);
+    dest.is_fastq = src.is_fastq;
+}
+
+fn writeSequence(writer: anytype, sequence: *const kseq.Sequence) !void {
+    if (sequence.is_fastq) {
+        // Write FASTQ format
+        try writer.writeByte('@');
+        try writer.writeAll(sequence.name.items);
+        if (sequence.comment.items.len > 0) {
+            try writer.writeByte(' ');
+            try writer.writeAll(sequence.comment.items);
+        }
+        try writer.writeByte('\n');
+        try writer.writeAll(sequence.sequence.items);
+        try writer.writeAll("\n+\n");
+        try writer.writeAll(sequence.quality.items);
+        try writer.writeByte('\n');
+    } else {
+        // Write FASTA format
+        try writer.writeByte('>');
+        try writer.writeAll(sequence.name.items);
+        if (sequence.comment.items.len > 0) {
+            try writer.writeByte(' ');
+            try writer.writeAll(sequence.comment.items);
+        }
+        try writer.writeByte('\n');
+        try writer.writeAll(sequence.sequence.items);
+        try writer.writeByte('\n');
+    }
 }
