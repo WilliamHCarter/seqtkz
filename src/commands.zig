@@ -239,9 +239,61 @@ pub fn cutN(args: []const []const u8, allocator: std.mem.Allocator) CommandError
 }
 
 pub fn gap(args: []const []const u8, allocator: std.mem.Allocator) CommandError!void {
-    _ = args;
-    _ = allocator;
-    // TODO: Implement gap location identification
+    var min_size: usize = 50;
+
+    var i: usize = 0;
+    while (i < args.len and args[i][0] == '-') : (i += 1) {
+        if (std.mem.eql(u8, args[i], "-l")) {
+            i += 1;
+            if (i >= args.len) return CommandError.MissingArgument;
+            min_size = std.fmt.parseInt(usize, args[i], 10) catch return CommandError.InvalidArgument;
+        } else {
+            return CommandError.InvalidArgument;
+        }
+    }
+
+    if (i < args.len) {
+        const file = std.fs.cwd().openFile(args[i], .{}) catch return error.FileNotFound;
+        defer file.close();
+        return gapImpl(allocator, file.reader(), std.io.getStdOut().writer(), min_size) catch error.CommandFailed;
+    } else if (!std.io.getStdIn().isTty()) {
+        return gapImpl(allocator, std.io.getStdIn().reader(), std.io.getStdOut().writer(), min_size) catch error.CommandFailed;
+    } else {
+        std.debug.print("Usage: seqtk gap [-l 50] <in.fa>\n", .{});
+        return CommandError.InvalidArgument;
+    }
+}
+
+fn gapImpl(allocator: std.mem.Allocator, reader: anytype, writer: anytype, min_size: usize) !void {
+    var seq_reader = kseq.FastaReader(@TypeOf(reader)).init(reader, allocator);
+    var sequence = kseq.Sequence.init(allocator);
+    defer sequence.deinit();
+
+    while (try seq_reader.readSequence(&sequence)) {
+        var i: usize = 0;
+        while (i < sequence.sequence.items.len) {
+            // Skip non-gap characters
+            while (i < sequence.sequence.items.len and !isGapChar(sequence.sequence.items[i])) : (i += 1) {}
+
+            if (i >= sequence.sequence.items.len) break;
+
+            // Found gap start
+            const start = i;
+            while (i < sequence.sequence.items.len and isGapChar(sequence.sequence.items[i])) : (i += 1) {}
+
+            // Report if gap is large enough
+            if (i - start >= min_size) {
+                try writer.print("{s}\t{d}\t{d}\n", .{ sequence.name.items, start, i });
+            }
+        }
+    }
+}
+
+fn isGapChar(c: u8) bool {
+    return switch (c) {
+        'A', 'a', 'C', 'c', 'G', 'g', 'T', 't' => false,
+        else => true,
+    };
 }
 
 pub fn listhet(args: []const []const u8, allocator: std.mem.Allocator) CommandError!void {
